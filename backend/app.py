@@ -46,6 +46,10 @@ def get_current_user():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+@app.route('/')
+def home():
+    return {"status": "Backend is running successfully"}, 200
+
 
 # ─── AUTHENTICATION ROUTES ───────────────────────────────────────
 
