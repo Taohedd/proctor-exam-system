@@ -378,6 +378,31 @@ def log_proctoring_flag():
     db.session.commit()
     return jsonify({"msg": "Violation logged successfully"}), 201
 
+@app.route('/api/admin/users', methods=['GET'])
+def get_all_users():
+    students = Student.query.all()
+    lecturers = Lecturer.query.all()
+    return jsonify({
+        'total_students': len(students),
+        'total_lecturers': len(lecturers),
+        'students': [s.to_dict() for s in students],
+        'lecturers': [l.to_dict() for l in lecturers]
+    }), 200
+
+@app.route('/api/admin/exams', methods=['GET'])
+def get_all_exams():
+    exams = Exam.query.all()
+    results = ExamResult.query.all()
+    flags = ProctoringFlag.query.all()
+    return jsonify({
+        'total_exams': len(exams),
+        'total_submissions': len(results),
+        'total_flags': len(flags),
+        'exams': [e.to_dict() for e in exams],
+        'results': [r.to_dict() for r in results],
+        'flags': [f.to_dict() for f in flags]
+    }), 200
+
 
 if __name__ == '__main__':
     with app.app_context():
