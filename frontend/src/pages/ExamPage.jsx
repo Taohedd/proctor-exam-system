@@ -208,12 +208,17 @@ const ExamPage = () => {
     }, [isExamStarted, timeLeft, submitExam]);
 
     const startExam = async () => {
+    // Set exam as started FIRST
+    setIsExamStarted(true);
+
+    // Then request fullscreen on the whole page
     try {
-        await enterFullscreen(examContainerRef.current);
+        await enterFullscreen(document.documentElement);
     } catch (err) {
-        console.warn("Fullscreen failed, continuing anyway:", err);
+        console.warn("Fullscreen failed:", err);
     }
 
+    // Then request camera
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { width: 320, height: 240, facingMode: 'user' } 
@@ -221,29 +226,21 @@ const ExamPage = () => {
         
         if (videoRef.current) {
             videoRef.current.srcObject = stream;
-
-            // Start exam when video loads
             videoRef.current.onloadeddata = () => {
                 setIsCameraReady(true);
-                setIsExamStarted(true);
             };
-
-            // Fallback — start exam after 3 seconds even if onloadeddata doesn't fire
-            setTimeout(() => {
-                setIsCameraReady(true);
-                setIsExamStarted(true);
-            }, 3000);
+            setTimeout(() => setIsCameraReady(true), 3000);
         }
     } catch (err) {
         console.error("Camera access failed:", err);
-
         if (err.name === 'NotAllowedError') {
-            setError("Camera access was denied. Please click the camera icon in your browser's address bar and allow access, then refresh and try again.");
+            setError("Camera access was denied. Please allow camera access and try again.");
         } else if (err.name === 'NotFoundError') {
-            setError("No camera was found on this device. A webcam is required to take this exam.");
+            setError("No camera found on this device. A webcam is required.");
         } else {
-            setError("Failed to access camera. Please ensure your camera is not in use by another app, then try again.");
+            setError("Failed to access camera. Please ensure your camera is not in use.");
         }
+        setIsExamStarted(false);
         exitFullscreen();
     }
 };
