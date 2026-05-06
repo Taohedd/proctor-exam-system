@@ -186,10 +186,22 @@ def get_student_exams():
 
     student = Student.query.get(current_user['id'])
     student_course = f"{student.department} {student.level}"
-
     exams = Exam.query.filter_by(course_name=student_course).all()
-    return jsonify([exam.to_dict() for exam in exams]), 200
 
+    result = []
+    for exam in exams:
+        existing_result = ExamResult.query.filter_by(
+            student_id=current_user['id'],
+            exam_id=exam.id
+        ).first()
+        exam_dict = exam.to_dict()
+        exam_dict['already_taken'] = existing_result is not None
+        exam_dict['score'] = existing_result.score if existing_result else None
+        exam_dict['total_questions'] = existing_result.total_questions if existing_result else None
+        exam_dict['status'] = existing_result.status if existing_result else None
+        result.append(exam_dict)
+
+    return jsonify(result), 200
 
 @app.route('/api/exam/<int:exam_id>/questions', methods=['GET'])
 @jwt_required()
@@ -403,6 +415,34 @@ def get_all_exams():
         'flags': [f.to_dict() for f in flags]
     }), 200
 
+@app.route('/api/lecturer/reset-attempt', methods=['POST'])
+@jwt_required()
+def reset_student_attempt():
+    current_user = get_current_user()
+    if current_user['role'] != 'lecturer':
+        return jsonify({"msg": "Lecturers only!"}), 403
+
+    data = request.get_json()
+    student_id = data.get('student_id')
+    exam_id = data.get('exam_id')
+
+    if not student_id or not exam_id:
+        return jsonify({"msg": "student_id and exam_id are required"}), 400
+
+    # Delete exam result
+    result = ExamResult.query.filter_by(
+        student_id=student_id, exam_id=exam_id
+    ).first()
+    if result:
+        db.session.delete(result)
+
+    # Delete proctoring flags
+    ProctoringFlag.query.filter_by(
+        student_id=student_id, exam_id=exam_id
+    ).delete()
+
+    db.session.commit()
+    return jsonify({"msg": "Student attempt has been reset successfully"}), 200
 
 if __name__ == '__main__':
     with app.app_context():
