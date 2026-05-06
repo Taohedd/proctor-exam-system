@@ -18,7 +18,8 @@ app.config['SECRET_KEY'] = 'a-very-secret-key-that-no-one-can-guess'
 database_url = os.environ.get('DATABASE_URL')
 
 if database_url and database_url.startswith("postgres://"):
-    # Updated to use the 'psycopg' driver explicitly
+    # This changes 'postgres://' to 'postgresql+psycopg://'
+    # The '+psycopg' tells SQLAlchemy to use the psycopg v3 driver you just installed
     database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///site.db'
