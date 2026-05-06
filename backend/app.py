@@ -387,31 +387,25 @@ def get_lecturer_exams():
     return jsonify([exam.to_dict() for exam in exams]), 200
 
 
-@app.route('/api/exam/<int:exam_id>/results', methods=['GET'])
+@app.route('/api/exam/<int:exam_id>/questions/full', methods=['GET'])
 @jwt_required()
-def get_exam_results(exam_id):
+def get_exam_questions_full(exam_id):
     current_user = get_current_user()
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    exam = Exam.query.filter_by(
-        id=exam_id, lecturer_id=current_user['id']
-    ).first()
+    exam = Exam.query.get(exam_id)
     if not exam:
-        return jsonify({"msg": "Exam not found or not authorized."}), 404
+        return jsonify({"msg": "Exam not found"}), 404
 
-    results = ExamResult.query.filter_by(exam_id=exam_id).all()
-    results_data = []
-    for result in results:
-        flags = ProctoringFlag.query.filter_by(
-            student_id=result.student_id,
-            exam_id=exam_id
-        ).all()
-        result_dict = result.to_dict()
-        result_dict['flags'] = [flag.to_dict() for flag in flags]
-        results_data.append(result_dict)
-
-    return jsonify(results_data), 200
+    questions = Question.query.filter_by(exam_id=exam_id).all()
+    return jsonify({
+        'exam_title': exam.title,
+        'course_name': exam.course_name,
+        'duration_minutes': exam.duration_minutes,
+        'total_questions': len(questions),
+        'questions': [q.to_dict(include_answer=True) for q in questions]
+    }), 200
 
 
 @app.route('/api/lecturer/students', methods=['GET'])
