@@ -53,7 +53,7 @@ const ExamPage = () => {
                     },
                     outputFaceBlendshapes: true,
                     runningMode: "VIDEO",
-                    numFaces: 2
+                    numFaces: 1
                 });
                 faceLandmarkerRef.current = landmarker;
             } catch (e) {
