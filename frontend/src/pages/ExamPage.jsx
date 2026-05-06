@@ -216,19 +216,27 @@ const ExamPage = () => {
 
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 320, height: 240 } 
+            video: { width: 320, height: 240, facingMode: 'user' } 
         });
         
         if (videoRef.current) {
             videoRef.current.srcObject = stream;
+
+            // Start exam when video loads
             videoRef.current.onloadeddata = () => {
                 setIsCameraReady(true);
                 setIsExamStarted(true);
             };
+
+            // Fallback — start exam after 3 seconds even if onloadeddata doesn't fire
+            setTimeout(() => {
+                setIsCameraReady(true);
+                setIsExamStarted(true);
+            }, 3000);
         }
     } catch (err) {
         console.error("Camera access failed:", err);
-        
+
         if (err.name === 'NotAllowedError') {
             setError("Camera access was denied. Please click the camera icon in your browser's address bar and allow access, then refresh and try again.");
         } else if (err.name === 'NotFoundError') {
