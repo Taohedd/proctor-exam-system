@@ -208,21 +208,37 @@ const ExamPage = () => {
     }, [isExamStarted, timeLeft, submitExam]);
 
     const startExam = async () => {
-        try {
-            await enterFullscreen(examContainerRef.current);
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                videoRef.current.onloadeddata = () => {
-                    setIsCameraReady(true);
-                    setIsExamStarted(true);
-                };
-            }
-        } catch (err) {
-            setError("Failed to access camera or enter fullscreen. Please grant permissions and try again.");
-        }
-    };
+    try {
+        await enterFullscreen(examContainerRef.current);
+    } catch (err) {
+        console.warn("Fullscreen failed, continuing anyway:", err);
+    }
 
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { width: 320, height: 240 } 
+        });
+        
+        if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.onloadeddata = () => {
+                setIsCameraReady(true);
+                setIsExamStarted(true);
+            };
+        }
+    } catch (err) {
+        console.error("Camera access failed:", err);
+        
+        if (err.name === 'NotAllowedError') {
+            setError("Camera access was denied. Please click the camera icon in your browser's address bar and allow access, then refresh and try again.");
+        } else if (err.name === 'NotFoundError') {
+            setError("No camera was found on this device. A webcam is required to take this exam.");
+        } else {
+            setError("Failed to access camera. Please ensure your camera is not in use by another app, then try again.");
+        }
+        exitFullscreen();
+    }
+};
     const handleAnswerSelect = (questionId, optionKey) => {
         setAnswers(prev => ({ ...prev, [questionId]: optionKey }));
     };
