@@ -23,9 +23,10 @@ app.config['SECRET_KEY'] = 'a-very-secret-key-that-no-one-can-guess'
 # ── DATABASE CONFIG ───────────────────────────────────────
 DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///site.db')
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # ── JWT CONFIG ────────────────────────────────────────────
 app.config['JWT_SECRET_KEY'] = 'another-super-secret-key'
