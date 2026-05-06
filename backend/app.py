@@ -1,4 +1,6 @@
 import os
+import cloudinary
+import cloudinary.uploader
 from flask import Flask, request, jsonify, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import (
@@ -10,33 +12,47 @@ from werkzeug.utils import secure_filename
 from datetime import timedelta
 from models import db, Student, Lecturer, Exam, Question, ExamResult, ProctoringFlag
 
+# ── UPLOAD CONFIG ─────────────────────────────────────────
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
+# ── APP INIT ──────────────────────────────────────────────
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'a-very-secret-key-that-no-one-can-guess'
-database_url = os.environ.get('DATABASE_URL')
 
-if database_url and database_url.startswith("postgres://"):
-    # This changes 'postgres://' to 'postgresql+psycopg://'
-    # The '+psycopg' tells SQLAlchemy to use the psycopg v3 driver you just installed
-   database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
-
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///site.db'
+# ── DATABASE CONFIG ───────────────────────────────────────
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///site.db')
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# ── JWT CONFIG ────────────────────────────────────────────
 app.config['JWT_SECRET_KEY'] = 'another-super-secret-key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+# ── UPLOAD FOLDER ─────────────────────────────────────────
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+# ── CLOUDINARY CONFIG ─────────────────────────────────────
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET')
+)
+
+# ── EXTENSIONS ────────────────────────────────────────────
 db.init_app(app)
 jwt = JWTManager(app)
 CORS(app, resources={r"/api/*": {"origins": [
     "http://localhost:5173",
     "https://proctor-exam-system.vercel.app"
 ]}})
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
 
+
+# ── HELPERS ───────────────────────────────────────────────
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -51,20 +67,39 @@ def get_current_user():
         'full_name': claims.get('full_name')
     }
 
+def upload_image(file, public_id):
+    """Upload image to Cloudinary if configured, else save locally."""
+    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME')
+    if cloud_name:
+        result = cloudinary.uploader.upload(
+            file,
+            folder="proctor_passports",
+            public_id=public_id,
+            overwrite=True
+        )
+        return result['secure_url']
+    else:
+        # Local fallback
+        filename = secure_filename(f"{public_id}.jpg")
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        return f"uploads/{filename}"
+
+
+# ── SERVE LOCAL UPLOADS ───────────────────────────────────
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-@app.route('/')
-def home():
-    return {"status": "Backend is running successfully"}, 200
 
-
-# ─── AUTHENTICATION ROUTES ───────────────────────────────────────
+# ════════════════════════════════════════════════════════════
+# AUTH ROUTES
+# ════════════════════════════════════════════════════════════
 
 @app.route('/api/student/register', methods=['POST'])
 def register_student():
     data = request.form
+
     if 'passport_photo' not in request.files:
         return jsonify({"msg": "No passport photo provided"}), 400
 
@@ -79,31 +114,31 @@ def register_student():
         return jsonify({"msg": "Matric number already exists"}), 409
 
     # Split course into department and level
-    # e.g. "Computer Science 100" -> department="Computer Science", level="100"
     course = data['course'].strip()
     try:
         department, level = course.rsplit(' ', 1)
     except ValueError:
         return jsonify({"msg": "Course format must be e.g. 'Computer Science 100'"}), 400
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(f"student_{data['matric_number']}_{file.filename}")
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+    if not allowed_file(file.filename):
+        return jsonify({"msg": "Invalid file type. Only JPG and PNG allowed."}), 400
 
-        new_student = Student(
-            full_name=data['full_name'],
-            matric_number=data['matric_number'],
-            department=department,
-            level=level,
-            passport_photo_path=f'uploads/{filename}'
-        )
-        new_student.set_password(data['password'])
-        db.session.add(new_student)
-        db.session.commit()
-        return jsonify({"msg": "Student registered successfully"}), 201
-    else:
-        return jsonify({"msg": "Invalid file type"}), 400
+    try:
+        passport_url = upload_image(file, f"student_{data['matric_number']}")
+    except Exception as e:
+        return jsonify({"msg": f"Image upload failed: {str(e)}"}), 500
+
+    new_student = Student(
+        full_name=data['full_name'],
+        matric_number=data['matric_number'],
+        department=department,
+        level=level,
+        passport_photo_path=passport_url
+    )
+    new_student.set_password(data['password'])
+    db.session.add(new_student)
+    db.session.commit()
+    return jsonify({"msg": "Student registered successfully"}), 201
 
 
 @app.route('/api/student/login', methods=['POST'])
@@ -111,6 +146,9 @@ def login_student():
     data = request.get_json()
     matric_number = data.get('matric_number')
     password = data.get('password')
+
+    if not matric_number or not password:
+        return jsonify({"msg": "Matric number and password are required"}), 400
 
     student = Student.query.filter_by(matric_number=matric_number).first()
     if student and student.check_password(password):
@@ -124,12 +162,13 @@ def login_student():
         )
         return jsonify(access_token=access_token, user=student.to_dict()), 200
 
-    return jsonify({"msg": "Bad matric number or password"}), 401
+    return jsonify({"msg": "Invalid matric number or password"}), 401
 
 
 @app.route('/api/lecturer/register', methods=['POST'])
 def register_lecturer():
     data = request.get_json()
+
     if not all(k in data for k in ['full_name', 'email', 'password', 'course_name']):
         return jsonify({"msg": "Missing required fields"}), 400
 
@@ -153,6 +192,9 @@ def login_lecturer():
     email = data.get('email')
     password = data.get('password')
 
+    if not email or not password:
+        return jsonify({"msg": "Email and password are required"}), 400
+
     lecturer = Lecturer.query.filter_by(email=email).first()
     if lecturer and lecturer.check_password(password):
         access_token = create_access_token(
@@ -165,10 +207,12 @@ def login_lecturer():
         )
         return jsonify(access_token=access_token, user=lecturer.to_dict()), 200
 
-    return jsonify({"msg": "Bad email or password"}), 401
+    return jsonify({"msg": "Invalid email or password"}), 401
 
 
-# ─── STUDENT ROUTES ──────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════
+# STUDENT ROUTES
+# ════════════════════════════════════════════════════════════
 
 @app.route('/api/student/profile', methods=['GET'])
 @jwt_required()
@@ -210,10 +254,21 @@ def get_student_exams():
 
     return jsonify(result), 200
 
+
 @app.route('/api/exam/<int:exam_id>/questions', methods=['GET'])
 @jwt_required()
 def get_exam_questions(exam_id):
     current_user = get_current_user()
+
+    # Prevent retaking from the backend too
+    if current_user['role'] == 'student':
+        existing = ExamResult.query.filter_by(
+            student_id=current_user['id'],
+            exam_id=exam_id
+        ).first()
+        if existing:
+            return jsonify({"msg": "You have already taken this exam."}), 403
+
     questions = Question.query.filter_by(exam_id=exam_id).all()
 
     if current_user['role'] == 'student':
@@ -232,15 +287,15 @@ def submit_exam(exam_id):
     if current_user['role'] != 'student':
         return jsonify({"msg": "Students only!"}), 403
 
-    data = request.get_json()
-    answers = data.get('answers', {})
-    time_taken = data.get('time_taken', 0)
-    status = data.get('status', 'Completed')
-
     if ExamResult.query.filter_by(
         student_id=current_user['id'], exam_id=exam_id
     ).first():
         return jsonify({"msg": "You have already submitted this exam."}), 400
+
+    data = request.get_json()
+    answers = data.get('answers', {})
+    time_taken = data.get('time_taken', 0)
+    status = data.get('status', 'Completed')
 
     questions = Question.query.filter_by(exam_id=exam_id).all()
     score = 0
@@ -277,7 +332,9 @@ def get_student_results():
     return jsonify([result.to_dict() for result in results]), 200
 
 
-# ─── LECTURER ROUTES ─────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════
+# LECTURER ROUTES
+# ════════════════════════════════════════════════════════════
 
 @app.route('/api/exam/create', methods=['POST'])
 @jwt_required()
@@ -346,7 +403,8 @@ def get_exam_results(exam_id):
     results_data = []
     for result in results:
         flags = ProctoringFlag.query.filter_by(
-            student_id=result.student_id, exam_id=exam_id
+            student_id=result.student_id,
+            exam_id=exam_id
         ).all()
         result_dict = result.to_dict()
         result_dict['flags'] = [flag.to_dict() for flag in flags]
@@ -374,7 +432,37 @@ def get_lecturer_students():
     return jsonify([student.to_dict() for student in students]), 200
 
 
-# ─── PROCTORING ROUTE ────────────────────────────────────────────
+@app.route('/api/lecturer/reset-attempt', methods=['POST'])
+@jwt_required()
+def reset_student_attempt():
+    current_user = get_current_user()
+    if current_user['role'] != 'lecturer':
+        return jsonify({"msg": "Lecturers only!"}), 403
+
+    data = request.get_json()
+    student_id = data.get('student_id')
+    exam_id = data.get('exam_id')
+
+    if not student_id or not exam_id:
+        return jsonify({"msg": "student_id and exam_id are required"}), 400
+
+    result = ExamResult.query.filter_by(
+        student_id=student_id, exam_id=exam_id
+    ).first()
+    if result:
+        db.session.delete(result)
+
+    ProctoringFlag.query.filter_by(
+        student_id=student_id, exam_id=exam_id
+    ).delete()
+
+    db.session.commit()
+    return jsonify({"msg": "Student attempt reset successfully"}), 200
+
+
+# ════════════════════════════════════════════════════════════
+# PROCTORING ROUTE
+# ════════════════════════════════════════════════════════════
 
 @app.route('/api/proctor/flag', methods=['POST'])
 @jwt_required()
@@ -397,6 +485,11 @@ def log_proctoring_flag():
     db.session.commit()
     return jsonify({"msg": "Violation logged successfully"}), 201
 
+
+# ════════════════════════════════════════════════════════════
+# ADMIN ROUTES
+# ════════════════════════════════════════════════════════════
+
 @app.route('/api/admin/users', methods=['GET'])
 def get_all_users():
     students = Student.query.all()
@@ -407,6 +500,7 @@ def get_all_users():
         'students': [s.to_dict() for s in students],
         'lecturers': [l.to_dict() for l in lecturers]
     }), 200
+
 
 @app.route('/api/admin/exams', methods=['GET'])
 def get_all_exams():
@@ -422,41 +516,13 @@ def get_all_exams():
         'flags': [f.to_dict() for f in flags]
     }), 200
 
-@app.route('/api/lecturer/reset-attempt', methods=['POST'])
-@jwt_required()
-def reset_student_attempt():
-    current_user = get_current_user()
-    if current_user['role'] != 'lecturer':
-        return jsonify({"msg": "Lecturers only!"}), 403
 
-    data = request.get_json()
-    student_id = data.get('student_id')
-    exam_id = data.get('exam_id')
-
-    if not student_id or not exam_id:
-        return jsonify({"msg": "student_id and exam_id are required"}), 400
-
-    # Delete exam result
-    result = ExamResult.query.filter_by(
-        student_id=student_id, exam_id=exam_id
-    ).first()
-    if result:
-        db.session.delete(result)
-
-    # Delete proctoring flags
-    ProctoringFlag.query.filter_by(
-        student_id=student_id, exam_id=exam_id
-    ).delete()
-
-    db.session.commit()
-    return jsonify({"msg": "Student attempt has been reset successfully"}), 200
-def create_tables():
-    with app.app_context():
-        db.create_all()
-
-# Call it safely
-create_tables()
+# ════════════════════════════════════════════════════════════
+# RUN
+# ════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=False, host="0.0.0.0", port=port)
