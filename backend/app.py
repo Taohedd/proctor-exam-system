@@ -450,8 +450,12 @@ def reset_student_attempt():
 
     db.session.commit()
     return jsonify({"msg": "Student attempt has been reset successfully"}), 200
-with app.app_context():
+def create_tables():
+    with app.app_context():
         db.create_all()
+
+# Call it safely
+create_tables()
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
