@@ -32,8 +32,8 @@ const ExamPage = () => {
     const isExamStartedRef = useRef(false);
     const examRef = useRef(null);
     const timeLeftRef = useRef(null);
+    const lastViolationTimeRef = useRef(0); // throttle violations
 
-    // Keep refs in sync with state
     useEffect(() => { warningsRef.current = warnings; }, [warnings]);
     useEffect(() => { isExamStartedRef.current = isExamStarted; }, [isExamStarted]);
     useEffect(() => { examRef.current = exam; }, [exam]);
@@ -88,6 +88,7 @@ const ExamPage = () => {
         fetchExamData();
     }, [examId]);
 
+    // ── SUBMIT EXAM ────────────────────────────────────────────
     const submitExam = useCallback(async (status = 'Completed') => {
         if (requestAnimFrameRef.current) {
             cancelAnimationFrame(requestAnimFrameRef.current);
@@ -117,15 +118,40 @@ const ExamPage = () => {
         }
     }, [examId, answers, navigate]);
 
+    // ── AUDIO WARNING BEEP ────────────────────────────────────
+    const playWarningBeep = useCallback(() => {
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8);
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.8);
+        } catch (e) {
+            console.warn("Audio warning failed:", e);
+        }
+    }, []);
+
+    // ── HANDLE VIOLATION ──────────────────────────────────────
     const handleViolation = useCallback((violationType) => {
+        // Throttle — only one violation every 5 seconds
+        const now = Date.now();
+        if (now - lastViolationTimeRef.current < 5000) return;
+        lastViolationTimeRef.current = now;
+
         const currentWarnings = warningsRef.current;
         const newWarningCount = currentWarnings.length + 1;
-
         const newWarning = { type: violationType, number: newWarningCount, timestamp: new Date() };
 
         setWarnings(prev => [...prev, newWarning]);
         setLastWarning(newWarning);
         setShowWarningModal(true);
+        playWarningBeep();
 
         api.post('/proctor/flag', {
             exam_id: parseInt(examId),
@@ -136,30 +162,83 @@ const ExamPage = () => {
         if (newWarningCount >= VIOLATION_LIMIT) {
             submitExam('Force-Submitted');
         } else {
-            setTimeout(() => setShowWarningModal(false), 3000);
+            setTimeout(() => setShowWarningModal(false), 4000);
         }
-    }, [examId, submitExam]);
+    }, [examId, submitExam, playWarningBeep]);
 
+    // ── FRAME ANALYSIS (camera block detection) ───────────────
+    const analyzeFrame = useCallback((video) => {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, 64, 64);
+            const imageData = ctx.getImageData(0, 0, 64, 64);
+            const data = imageData.data;
+            const samples = data.length / 4;
+
+            let totalBrightness = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+            }
+            const avgBrightness = totalBrightness / samples;
+
+            let variance = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                const b = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                variance += Math.pow(b - avgBrightness, 2);
+            }
+            variance = variance / samples;
+
+            return { avgBrightness, variance };
+        } catch (e) {
+            return { avgBrightness: 128, variance: 500 };
+        }
+    }, []);
+
+    // ── PROCTORING LOOP ───────────────────────────────────────
     const predictWebcam = useCallback(() => {
         if (!isExamStartedRef.current || !faceLandmarkerRef.current || !videoRef.current) return;
 
         const video = videoRef.current;
+
         if (video.currentTime !== lastVideoTimeRef.current) {
             lastVideoTimeRef.current = video.currentTime;
+
             try {
+                // Step 1: Analyze frame brightness
+                const { avgBrightness, variance } = analyzeFrame(video);
+
+                // Camera is blocked/covered — very dark or uniform frame
+                if (avgBrightness < 15 || variance < 20) {
+                    handleViolation("Camera is blocked or covered");
+                    requestAnimFrameRef.current = requestAnimationFrame(predictWebcam);
+                    return;
+                }
+
+                // Step 2: Run face detection
                 const results = faceLandmarkerRef.current.detectForVideo(video, Date.now());
 
                 if (results.faceLandmarks) {
                     if (results.faceLandmarks.length === 0) {
-                        handleViolation("No face detected");
+                        // Frame is bright but no face — phone or object blocking
+                        if (avgBrightness > 40 && variance > 100) {
+                            handleViolation("Object or phone detected in front of camera");
+                        } else {
+                            handleViolation("No face detected");
+                        }
                     } else if (results.faceLandmarks.length > 1) {
                         handleViolation("Multiple faces detected");
                     } else if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+                        // Step 3: Gaze tracking
                         const blendshapes = results.faceBlendshapes[0].categories;
                         const eyeLookLeft = blendshapes.find(s => s.categoryName === 'eyeLookOutLeft')?.score || 0;
                         const eyeLookRight = blendshapes.find(s => s.categoryName === 'eyeLookOutRight')?.score || 0;
+                        const eyeLookDown = blendshapes.find(s => s.categoryName === 'eyeLookDownLeft')?.score || 0;
+                        const eyeLookUp = blendshapes.find(s => s.categoryName === 'eyeLookUpLeft')?.score || 0;
 
-                        if (eyeLookLeft > 0.6 || eyeLookRight > 0.6) {
+                        if (eyeLookLeft > 0.6 || eyeLookRight > 0.6 || eyeLookDown > 0.7 || eyeLookUp > 0.7) {
                             handleViolation("Looking away from screen");
                         }
                     }
@@ -168,10 +247,11 @@ const ExamPage = () => {
                 console.error("Detection error:", e);
             }
         }
-        requestAnimFrameRef.current = requestAnimationFrame(predictWebcam);
-    }, [handleViolation]);
 
-    // Setup proctoring listeners
+        requestAnimFrameRef.current = requestAnimationFrame(predictWebcam);
+    }, [handleViolation, analyzeFrame]);
+
+    // ── SETUP PROCTORING LISTENERS ────────────────────────────
     useEffect(() => {
         if (!isExamStarted) return;
 
@@ -199,7 +279,7 @@ const ExamPage = () => {
         };
     }, [isExamStarted, predictWebcam, handleViolation]);
 
-    // Timer
+    // ── TIMER ─────────────────────────────────────────────────
     useEffect(() => {
         if (!isExamStarted || timeLeft === null) return;
         if (timeLeft <= 0) { submitExam('Time Expired'); return; }
@@ -207,43 +287,40 @@ const ExamPage = () => {
         return () => clearInterval(timer);
     }, [isExamStarted, timeLeft, submitExam]);
 
+    // ── START EXAM ────────────────────────────────────────────
     const startExam = async () => {
-    // Set exam as started FIRST
-    setIsExamStarted(true);
+        setIsExamStarted(true);
 
-    // Then request fullscreen on the whole page
-    try {
-        await enterFullscreen(document.documentElement);
-    } catch (err) {
-        console.warn("Fullscreen failed:", err);
-    }
+        try {
+            await enterFullscreen(document.documentElement);
+        } catch (err) {
+            console.warn("Fullscreen failed:", err);
+        }
 
-    // Then request camera
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 320, height: 240, facingMode: 'user' } 
-        });
-        
-        if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            videoRef.current.onloadeddata = () => {
-                setIsCameraReady(true);
-            };
-            setTimeout(() => setIsCameraReady(true), 3000);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 320, height: 240, facingMode: 'user' }
+            });
+
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                videoRef.current.onloadeddata = () => setIsCameraReady(true);
+                setTimeout(() => setIsCameraReady(true), 3000);
+            }
+        } catch (err) {
+            console.error("Camera access failed:", err);
+            if (err.name === 'NotAllowedError') {
+                setError("Camera access was denied. Please click the camera icon in your browser's address bar, allow access, then refresh and try again.");
+            } else if (err.name === 'NotFoundError') {
+                setError("No camera found on this device. A webcam is required to take this exam.");
+            } else {
+                setError("Failed to access camera. Please ensure your camera is not in use by another app.");
+            }
+            setIsExamStarted(false);
+            exitFullscreen();
         }
-    } catch (err) {
-        console.error("Camera access failed:", err);
-        if (err.name === 'NotAllowedError') {
-            setError("Camera access was denied. Please allow camera access and try again.");
-        } else if (err.name === 'NotFoundError') {
-            setError("No camera found on this device. A webcam is required.");
-        } else {
-            setError("Failed to access camera. Please ensure your camera is not in use.");
-        }
-        setIsExamStarted(false);
-        exitFullscreen();
-    }
-};
+    };
+
     const handleAnswerSelect = (questionId, optionKey) => {
         setAnswers(prev => ({ ...prev, [questionId]: optionKey }));
     };
@@ -257,6 +334,7 @@ const ExamPage = () => {
     if (loading) return <div className="text-center p-8 text-xl">Loading Exam...</div>;
     if (error) return <div className="text-center p-8 text-red-500 bg-red-100 rounded">{error}</div>;
 
+    // ── PRE-EXAM SCREEN ───────────────────────────────────────
     if (!isExamStarted) {
         return (
             <div className="text-center p-8 max-w-2xl mx-auto bg-white rounded-lg shadow-xl mt-10">
@@ -270,9 +348,11 @@ const ExamPage = () => {
                     <li>You must remain in fullscreen mode throughout the exam.</li>
                     <li>Do not switch tabs or minimize the browser.</li>
                     <li>Ensure only you are visible to the camera.</li>
+                    <li>Do not cover or block the camera at any time.</li>
+                    <li>Do not place any object or phone in front of the camera.</li>
                     <li>Do not look away from the screen for extended periods.</li>
                     <li>Copy, paste, and right-clicking are disabled.</li>
-                    <li><strong>You will be automatically logged out after 3 warnings.</strong></li>
+                    <li><strong>You will be automatically submitted after 3 warnings.</strong></li>
                 </ul>
                 <button
                     onClick={startExam}
@@ -286,8 +366,11 @@ const ExamPage = () => {
 
     const currentQuestion = questions[currentQuestionIndex];
 
+    // ── EXAM SCREEN ───────────────────────────────────────────
     return (
         <div ref={examContainerRef} className="bg-white h-screen w-screen overflow-y-auto flex flex-col">
+
+            {/* Warning Modal */}
             {showWarningModal && lastWarning && (
                 <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
                     <div className="bg-white p-8 rounded-lg shadow-2xl text-center w-full max-w-md">
@@ -301,6 +384,7 @@ const ExamPage = () => {
                 </div>
             )}
 
+            {/* Header */}
             <header className="flex justify-between items-center p-4 border-b bg-white shadow-sm">
                 <h1 className="text-2xl font-bold text-gray-800">{exam.title}</h1>
                 <div className="flex items-center space-x-4">
@@ -308,7 +392,14 @@ const ExamPage = () => {
                         ⏱ <span className={timeLeft < 60 ? 'text-red-600' : 'text-gray-800'}>{formatTime(timeLeft)}</span>
                     </div>
                     <div className="relative">
-                        <video ref={videoRef} autoPlay playsInline muted className="w-32 h-24 bg-black rounded-md" style={{ transform: 'scaleX(-1)' }}></video>
+                        <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="w-32 h-24 bg-black rounded-md"
+                            style={{ transform: 'scaleX(-1)' }}
+                        />
                         {!isCameraReady && (
                             <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center text-white text-xs rounded-md">
                                 Loading...
@@ -321,15 +412,22 @@ const ExamPage = () => {
                 </div>
             </header>
 
+            {/* Questions */}
             <main className="p-6 flex-1">
                 <div className="bg-gray-50 p-6 rounded-lg shadow-inner max-w-3xl mx-auto">
-                    <p className="text-sm text-gray-500 mb-2">Question {currentQuestionIndex + 1} of {questions.length}</p>
+                    <p className="text-sm text-gray-500 mb-2">
+                        Question {currentQuestionIndex + 1} of {questions.length}
+                    </p>
                     <h2 className="text-xl font-semibold mb-6">{currentQuestion?.question_text}</h2>
                     <div className="space-y-3">
                         {currentQuestion && Object.entries(currentQuestion.options).map(([key, value]) => (
                             <label
                                 key={key}
-                                className={`block p-4 border rounded-lg cursor-pointer transition ${answers[currentQuestion.id] === key ? 'bg-indigo-100 border-indigo-500 ring-2 ring-indigo-500' : 'bg-white border-gray-300 hover:bg-gray-100'}`}
+                                className={`block p-4 border rounded-lg cursor-pointer transition ${
+                                    answers[currentQuestion.id] === key
+                                        ? 'bg-indigo-100 border-indigo-500 ring-2 ring-indigo-500'
+                                        : 'bg-white border-gray-300 hover:bg-gray-100'
+                                }`}
                             >
                                 <input
                                     type="radio"
@@ -347,6 +445,7 @@ const ExamPage = () => {
                 </div>
             </main>
 
+            {/* Footer */}
             <footer className="p-4 border-t flex justify-between bg-white">
                 <button
                     onClick={() => setCurrentQuestionIndex(prev => Math.max(0, prev - 1))}
