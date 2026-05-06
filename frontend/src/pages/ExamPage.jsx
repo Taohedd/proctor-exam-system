@@ -219,8 +219,8 @@ const ExamPage = () => {
                         } else {
                             handleViolation("No face detected");
                         }
-                        let lookAwayStartTime = null; 
-                        const LOOK_AWAY_THRESHOLD_MS = 3000;
+                        //let lookAwayStartTime = null; 
+                        //const LOOK_AWAY_THRESHOLD_MS = 3000;
                     } else if (results.faceLandmarks.length > 1) {
                         handleViolation("Multiple faces detected");
                     } else if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
