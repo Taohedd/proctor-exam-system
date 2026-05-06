@@ -15,7 +15,13 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'a-very-secret-key-that-no-one-can-guess'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///site.db'
+# Replace the old line 18 with this block
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith("postgres://"):
+    # Fix for SQLAlchemy 1.4+ which requires 'postgresql://'
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///site.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'another-super-secret-key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
