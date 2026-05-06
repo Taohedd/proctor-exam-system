@@ -4,7 +4,7 @@ import api from '../services/api';
 import { FilesetResolver, FaceLandmarker } from "@mediapipe/tasks-vision";
 import { enterFullscreen, exitFullscreen } from '../utils/fullscreen';
 
-const VIOLATION_LIMIT = 3;
+const VIOLATION_LIMIT = 5;
 
 const ExamPage = () => {
     const { examId } = useParams();
@@ -397,7 +397,7 @@ const ExamPage = () => {
                     <li>Do not place any object or phone in front of the camera.</li>
                     <li>Do not look away from the screen for extended periods.</li>
                     <li>Copy, paste, and right-clicking are disabled.</li>
-                    <li><strong>You will be automatically submitted after 3 warnings.</strong></li>
+                    <li><strong>You will be automatically submitted after 5 warnings.</strong></li>
                 </ul>
                 <button
                     onClick={startExam}
