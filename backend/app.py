@@ -23,8 +23,6 @@ if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///site.db'
-
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///site.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'another-super-secret-key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
@@ -452,10 +450,10 @@ def reset_student_attempt():
 
     db.session.commit()
     return jsonify({"msg": "Student attempt has been reset successfully"}), 200
-
-if __name__ == '__main__':
-    with app.app_context():
+with app.app_context():
         db.create_all()
+if __name__ == '__main__':
+    
     import os
 port = int(os.environ.get("PORT", 5000))
 app.run(host="0.0.0.0", port=port)
