@@ -32,14 +32,14 @@ const ExamPage = () => {
     const isExamStartedRef = useRef(false);
     const examRef = useRef(null);
     const timeLeftRef = useRef(null);
-    const lastViolationTimeRef = useRef(0); // throttle violations
+    const lastViolationTimeRef = useRef(0);
 
     useEffect(() => { warningsRef.current = warnings; }, [warnings]);
     useEffect(() => { isExamStartedRef.current = isExamStarted; }, [isExamStarted]);
     useEffect(() => { examRef.current = exam; }, [exam]);
     useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
 
-    // Load MediaPipe Model
+    // ── LOAD MEDIAPIPE MODEL ──────────────────────────────────
     useEffect(() => {
         const createFaceLandmarker = async () => {
             try {
@@ -64,7 +64,7 @@ const ExamPage = () => {
         createFaceLandmarker();
     }, []);
 
-    // Fetch Exam Data
+    // ── FETCH EXAM DATA ───────────────────────────────────────
     useEffect(() => {
         const fetchExamData = async () => {
             try {
@@ -72,10 +72,8 @@ const ExamPage = () => {
                     api.get('/exams'),
                     api.get(`/exam/${examId}/questions`)
                 ]);
-
                 const foundExam = examsRes.data.find(e => e.id.toString() === examId);
                 if (!foundExam) throw new Error("Exam not found.");
-
                 setExam(foundExam);
                 setQuestions(questionsRes.data);
                 setTimeLeft(foundExam.duration_minutes * 60);
@@ -88,7 +86,7 @@ const ExamPage = () => {
         fetchExamData();
     }, [examId]);
 
-    // ── SUBMIT EXAM ────────────────────────────────────────────
+    // ── SUBMIT EXAM ───────────────────────────────────────────
     const submitExam = useCallback(async (status = 'Completed') => {
         if (requestAnimFrameRef.current) {
             cancelAnimationFrame(requestAnimFrameRef.current);
@@ -139,7 +137,6 @@ const ExamPage = () => {
 
     // ── HANDLE VIOLATION ──────────────────────────────────────
     const handleViolation = useCallback((violationType) => {
-        // Throttle — only one violation every 5 seconds
         const now = Date.now();
         if (now - lastViolationTimeRef.current < 5000) return;
         lastViolationTimeRef.current = now;
@@ -166,7 +163,7 @@ const ExamPage = () => {
         }
     }, [examId, submitExam, playWarningBeep]);
 
-    // ── FRAME ANALYSIS (camera block detection) ───────────────
+    // ── FRAME ANALYSIS ────────────────────────────────────────
     const analyzeFrame = useCallback((video) => {
         try {
             const canvas = document.createElement('canvas');
@@ -202,27 +199,21 @@ const ExamPage = () => {
         if (!isExamStartedRef.current || !faceLandmarkerRef.current || !videoRef.current) return;
 
         const video = videoRef.current;
-
         if (video.currentTime !== lastVideoTimeRef.current) {
             lastVideoTimeRef.current = video.currentTime;
-
             try {
-                // Step 1: Analyze frame brightness
                 const { avgBrightness, variance } = analyzeFrame(video);
 
-                // Camera is blocked/covered — very dark or uniform frame
                 if (avgBrightness < 15 || variance < 20) {
                     handleViolation("Camera is blocked or covered");
                     requestAnimFrameRef.current = requestAnimationFrame(predictWebcam);
                     return;
                 }
 
-                // Step 2: Run face detection
                 const results = faceLandmarkerRef.current.detectForVideo(video, Date.now());
 
                 if (results.faceLandmarks) {
                     if (results.faceLandmarks.length === 0) {
-                        // Frame is bright but no face — phone or object blocking
                         if (avgBrightness > 40 && variance > 100) {
                             handleViolation("Object or phone detected in front of camera");
                         } else {
@@ -231,7 +222,6 @@ const ExamPage = () => {
                     } else if (results.faceLandmarks.length > 1) {
                         handleViolation("Multiple faces detected");
                     } else if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-                        // Step 3: Gaze tracking
                         const blendshapes = results.faceBlendshapes[0].categories;
                         const eyeLookLeft = blendshapes.find(s => s.categoryName === 'eyeLookOutLeft')?.score || 0;
                         const eyeLookRight = blendshapes.find(s => s.categoryName === 'eyeLookOutRight')?.score || 0;
@@ -247,7 +237,6 @@ const ExamPage = () => {
                 console.error("Detection error:", e);
             }
         }
-
         requestAnimFrameRef.current = requestAnimationFrame(predictWebcam);
     }, [handleViolation, analyzeFrame]);
 
@@ -257,25 +246,82 @@ const ExamPage = () => {
 
         requestAnimFrameRef.current = requestAnimationFrame(predictWebcam);
 
+        // 1. Visibility API — tab switch
         const handleVisibilityChange = () => {
-            if (document.hidden) handleViolation("Switched tabs or minimized window");
+            if (document.hidden) {
+                handleViolation("Switched tabs or minimized window");
+            }
         };
+
+        // 2. Window blur — alt+tab, clicking away
+        const handleWindowBlur = () => {
+            if (isExamStartedRef.current) {
+                handleViolation("Window lost focus — possible tab switch");
+            }
+        };
+
+        // 3. Block keyboard shortcuts
+        const handleKeyDown = (e) => {
+            const blocked = (
+                (e.altKey && e.key === 'Tab') ||
+                (e.ctrlKey && e.key === 'Tab') ||
+                (e.ctrlKey && (e.key === 'w' || e.key === 'W')) ||
+                (e.ctrlKey && (e.key === 't' || e.key === 'T')) ||
+                (e.ctrlKey && (e.key === 'n' || e.key === 'N')) ||
+                (e.ctrlKey && (e.key === 'l' || e.key === 'L')) ||
+                (e.ctrlKey && (e.key === 'r' || e.key === 'R')) ||
+                e.key === 'Meta' ||
+                e.key === 'F5'
+            );
+            if (blocked) {
+                e.preventDefault();
+                e.stopPropagation();
+                handleViolation("Attempted to use restricted keyboard shortcut");
+            }
+        };
+
+        // 4. Block copy, paste, cut, right-click
         const preventAction = (e) => {
             e.preventDefault();
             handleViolation("Copy/Paste/Right-click attempted");
         };
 
+        // 5. Fullscreen change — re-enter if exited
+        const handleFullscreenChange = () => {
+            const isCurrentlyFullscreen =
+                document.fullscreenElement ||
+                document.webkitFullscreenElement ||
+                document.msFullscreenElement;
+
+            if (!isCurrentlyFullscreen && isExamStartedRef.current) {
+                handleViolation("Exited fullscreen mode");
+                setTimeout(() => {
+                    enterFullscreen(document.documentElement).catch(() => {});
+                }, 1000);
+            }
+        };
+
         document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('blur', handleWindowBlur);
+        document.addEventListener('keydown', handleKeyDown, true);
         document.addEventListener('copy', preventAction);
         document.addEventListener('paste', preventAction);
+        document.addEventListener('cut', preventAction);
         document.addEventListener('contextmenu', preventAction);
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
         return () => {
             if (requestAnimFrameRef.current) cancelAnimationFrame(requestAnimFrameRef.current);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('blur', handleWindowBlur);
+            document.removeEventListener('keydown', handleKeyDown, true);
             document.removeEventListener('copy', preventAction);
             document.removeEventListener('paste', preventAction);
+            document.removeEventListener('cut', preventAction);
             document.removeEventListener('contextmenu', preventAction);
+            document.removeEventListener('fullscreenchange', handleFullscreenChange);
+            document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
         };
     }, [isExamStarted, predictWebcam, handleViolation]);
 
@@ -301,7 +347,6 @@ const ExamPage = () => {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { width: 320, height: 240, facingMode: 'user' }
             });
-
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
                 videoRef.current.onloadeddata = () => setIsCameraReady(true);
