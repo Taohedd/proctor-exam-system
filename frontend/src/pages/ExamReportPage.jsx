@@ -42,12 +42,10 @@ const ExamReportPage = () => {
         try {
             const response = await api.get(`/exam/${examId}/questions/full`);
             const data = response.data;
-
             if (!data.questions || data.questions.length === 0) {
                 alert('No questions found for this exam.');
                 return;
             }
-
             setQuestions(data.questions);
             setExamTitle(data.exam_title || examTitle);
             setExamCourse(data.course_name || '');
@@ -84,6 +82,11 @@ const ExamReportPage = () => {
 
     // ── DOWNLOAD INDIVIDUAL STUDENT REPORT ───────────────
     const handleDownloadStudentReport = async (studentId, studentName) => {
+        if (!studentId) {
+            alert('Student ID is missing. Please refresh the page and try again.');
+            return;
+        }
+
         setDownloadingReport(studentId);
         try {
             const XLSX = await import('xlsx');
@@ -92,9 +95,14 @@ const ExamReportPage = () => {
             const student = data.student;
             const allResults = data.results;
 
+            if (!student || !allResults) {
+                alert('No report data found for this student.');
+                return;
+            }
+
             const wb = XLSX.utils.book_new();
 
-            // Sheet 1 — Summary
+            // ── Sheet 1: Summary ──────────────────────────
             const summaryData = [
                 ['STUDENT PERFORMANCE REPORT — ProctorAI'],
                 [],
@@ -131,7 +139,7 @@ const ExamReportPage = () => {
             ];
             XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
-            // One sheet per exam
+            // ── One sheet per exam ────────────────────────
             allResults.forEach((result, idx) => {
                 const examData = [
                     [`EXAM: ${result.exam_title}`],
@@ -160,7 +168,7 @@ const ExamReportPage = () => {
 
                 const wsExam = XLSX.utils.aoa_to_sheet(examData);
                 wsExam['!cols'] = [{ wch: 15 }, { wch: 42 }, { wch: 26 }];
-                const sheetName = `Exam ${idx + 1} - ${result.exam_title}`.substring(0, 31);
+                const sheetName = `Exam ${idx + 1}`.substring(0, 31);
                 XLSX.utils.book_append_sheet(wb, wsExam, sheetName);
             });
 
@@ -169,7 +177,8 @@ const ExamReportPage = () => {
 
         } catch (err) {
             console.error('Report download failed:', err);
-            alert('Failed to generate student report. Please try again.');
+            const msg = err.response?.data?.msg || err.message || 'Failed to generate student report.';
+            alert(`Error: ${msg}`);
         } finally {
             setDownloadingReport(null);
         }
@@ -209,6 +218,7 @@ const ExamReportPage = () => {
             XLSX.utils.book_append_sheet(wb, ws, 'All Results');
             XLSX.writeFile(wb, `${examTitle.replace(/\s+/g, '_')}_Results.xlsx`);
         } catch (err) {
+            console.error('Download all failed:', err);
             alert('Failed to download report. Please try again.');
         }
     };
@@ -222,7 +232,12 @@ const ExamReportPage = () => {
         </div>
     );
 
-    if (error) return <div className="text-center mt-8 text-red-500 bg-red-50 p-4 rounded">{error}</div>;
+    if (error) return (
+        <div className="text-center mt-8 text-red-500 bg-red-50 p-4 rounded max-w-lg mx-auto">
+            <p className="font-semibold">{error}</p>
+            <button onClick={fetchReport} className="mt-3 text-sm text-indigo-600 underline">Try again</button>
+        </div>
+    );
 
     return (
         <div className="container mx-auto p-4">
@@ -363,7 +378,7 @@ const ExamReportPage = () => {
                 </Link>
             </div>
 
-            {/* ── VIEW QUESTIONS MODAL ────────────────────── */}
+            {/* ── VIEW QUESTIONS MODAL ──────────────────── */}
             {showQuestions && (
                 <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
@@ -434,7 +449,7 @@ const ExamReportPage = () => {
                 </div>
             )}
 
-            {/* ── FLAG DETAILS MODAL ──────────────────────── */}
+            {/* ── FLAG DETAILS MODAL ────────────────────── */}
             {selectedStudent && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-lg">
@@ -451,7 +466,6 @@ const ExamReportPage = () => {
                             </button>
                         </div>
 
-                        {/* Mini summary */}
                         <div className="grid grid-cols-3 gap-3 mb-5">
                             <div className="bg-indigo-50 p-3 rounded-lg text-center">
                                 <p className="text-xl font-bold text-indigo-600">{selectedStudent.percentage}%</p>
@@ -510,9 +524,14 @@ const ExamReportPage = () => {
                                 <button
                                     onClick={() => handleDownloadStudentReport(selectedStudent.student_id, selectedStudent.student_name)}
                                     disabled={downloadingReport === selectedStudent.student_id}
-                                    className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded transition disabled:bg-gray-400"
+                                    className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded transition disabled:bg-gray-400 flex items-center gap-2"
                                 >
-                                    ⬇️ Download Report
+                                    {downloadingReport === selectedStudent.student_id ? (
+                                        <>
+                                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                            Generating...
+                                        </>
+                                    ) : '⬇️ Download Report'}
                                 </button>
                                 <button
                                     onClick={() => setSelectedStudent(null)}
