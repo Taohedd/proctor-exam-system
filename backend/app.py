@@ -337,6 +337,10 @@ def get_student_results():
 # LECTURER ROUTES
 # ════════════════════════════════════════════════════════════
 
+# ════════════════════════════════════════════════════════════
+# LECTURER ROUTES
+# ════════════════════════════════════════════════════════════
+
 @app.route('/api/exam/create', methods=['POST'])
 @jwt_required()
 def create_exam():
@@ -385,6 +389,48 @@ def get_lecturer_exams():
 
     exams = Exam.query.filter_by(lecturer_id=current_user['id']).all()
     return jsonify([exam.to_dict() for exam in exams]), 200
+
+
+@app.route('/api/exam/<int:exam_id>/results', methods=['GET'])
+@jwt_required()
+def get_exam_results(exam_id):
+    current_user = get_current_user()
+    if current_user['role'] != 'lecturer':
+        return jsonify({"msg": "Lecturers only!"}), 403
+
+    exam = Exam.query.get(exam_id)
+    if not exam:
+        return jsonify({"msg": "Exam not found"}), 404
+
+    results = ExamResult.query.filter_by(exam_id=exam_id).all()
+    results_data = []
+
+    for result in results:
+        try:
+            student = Student.query.get(result.student_id)
+            flags = ProctoringFlag.query.filter_by(
+                student_id=result.student_id,
+                exam_id=exam_id
+            ).all()
+            results_data.append({
+                'student_id': result.student_id,
+                'student_name': student.full_name if student else 'Unknown',
+                'matric_number': student.matric_number if student else 'Unknown',
+                'exam_id': result.exam_id,
+                'exam_title': exam.title,
+                'score': result.score,
+                'total_questions': result.total_questions,
+                'percentage': round((result.score / result.total_questions) * 100, 2) if result.total_questions > 0 else 0,
+                'time_taken': result.time_taken,
+                'status': result.status,
+                'submitted_at': result.submitted_at.isoformat(),
+                'flags': [flag.to_dict() for flag in flags]
+            })
+        except Exception as e:
+            print(f"Error processing result: {e}")
+            continue
+
+    return jsonify(results_data), 200
 
 
 @app.route('/api/exam/<int:exam_id>/questions/full', methods=['GET'])
@@ -454,6 +500,56 @@ def reset_student_attempt():
     db.session.commit()
     return jsonify({"msg": "Student attempt reset successfully"}), 200
 
+
+@app.route('/api/lecturer/student/<int:student_id>/full-report', methods=['GET'])
+@jwt_required()
+def get_student_full_report(student_id):
+    current_user = get_current_user()
+    if current_user['role'] != 'lecturer':
+        return jsonify({"msg": "Lecturers only!"}), 403
+
+    student = Student.query.get(student_id)
+    if not student:
+        return jsonify({"msg": "Student not found"}), 404
+
+    results = ExamResult.query.filter_by(student_id=student_id).all()
+
+    report = []
+    total_percentage = 0
+
+    for result in results:
+        try:
+            exam = Exam.query.get(result.exam_id)
+            flags = ProctoringFlag.query.filter_by(
+                student_id=student_id,
+                exam_id=result.exam_id
+            ).all()
+            percentage = round((result.score / result.total_questions) * 100, 2) if result.total_questions > 0 else 0
+            total_percentage += percentage
+            report.append({
+                'exam_id': result.exam_id,
+                'exam_title': exam.title if exam else 'Unknown',
+                'course_name': exam.course_name if exam else 'Unknown',
+                'score': result.score,
+                'total_questions': result.total_questions,
+                'percentage': percentage,
+                'time_taken': result.time_taken,
+                'status': result.status,
+                'submitted_at': result.submitted_at.isoformat(),
+                'flags': [f.to_dict() for f in flags]
+            })
+        except Exception as e:
+            print(f"Error processing student result: {e}")
+            continue
+
+    average = round(total_percentage / len(report), 2) if report else 0
+
+    return jsonify({
+        'student': student.to_dict(),
+        'total_exams_taken': len(report),
+        'average_score': average,
+        'results': report
+    }), 200
 
 # ════════════════════════════════════════════════════════════
 # PROCTORING ROUTE
