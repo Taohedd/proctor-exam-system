@@ -108,18 +108,11 @@ def register_student():
     if file.filename == '':
         return jsonify({"msg": "No file selected"}), 400
 
-    if not all(k in data for k in ['full_name', 'matric_number', 'course', 'password']):
+    if not all(k in data for k in ['full_name', 'matric_number', 'department', 'level', 'course', 'password']):
         return jsonify({"msg": "Missing required fields"}), 400
 
     if Student.query.filter_by(matric_number=data['matric_number']).first():
         return jsonify({"msg": "Matric number already exists"}), 409
-
-    # Split course into department and level
-    course = data['course'].strip()
-    try:
-        department, level = course.rsplit(' ', 1)
-    except ValueError:
-        return jsonify({"msg": "Course format must be e.g. 'Computer Science 100'"}), 400
 
     if not allowed_file(file.filename):
         return jsonify({"msg": "Invalid file type. Only JPG and PNG allowed."}), 400
@@ -132,8 +125,9 @@ def register_student():
     new_student = Student(
         full_name=data['full_name'],
         matric_number=data['matric_number'],
-        department=department,
-        level=level,
+        department=data['department'].strip(),
+        level=data['level'].strip(),
+        course=data['course'].strip(),
         passport_photo_path=passport_url
     )
     new_student.set_password(data['password'])
@@ -237,7 +231,10 @@ def get_student_exams():
         return jsonify({"msg": "Access forbidden"}), 403
 
     student = Student.query.get(current_user['id'])
-    student_course = f"{student.department} {student.level}"
+
+    # Use course field if available, else fall back to department + level
+    student_course = student.course if student.course else f"{student.department} {student.level}"
+
     exams = Exam.query.filter_by(course_name=student_course).all()
 
     result = []
@@ -611,9 +608,24 @@ def get_all_exams():
 # ════════════════════════════════════════════════════════════
 # RUN
 # ════════════════════════════════════════════════════════════
+# ── AUTO MIGRATION ────────────────────────────────────────
+def run_migrations():
+    try:
+        from sqlalchemy import text
+        db.session.execute(text("""
+            ALTER TABLE students 
+            ADD COLUMN IF NOT EXISTS course VARCHAR(100)
+        """))
+        db.session.commit()
+        print("✅ Migration complete.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Migration note: {e}")
+
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        run_migrations()
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)

@@ -12,6 +12,7 @@ class Student(db.Model):
     matric_number = db.Column(db.String(50), unique=True, nullable=False)
     department = db.Column(db.String(100), nullable=False)
     level = db.Column(db.String(10), nullable=False)
+    course = db.Column(db.String(100), nullable=True)
     password_hash = db.Column(db.String(256), nullable=False)
     passport_photo_path = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -32,7 +33,7 @@ class Student(db.Model):
             'matric_number': self.matric_number,
             'department': self.department,
             'level': self.level,
-            'course': f"{self.department} {self.level}",  # combined for frontend
+            'course': self.course or f"{self.department} {self.level}",
             'passport_photo_path': self.passport_photo_path,
             'created_at': self.created_at.isoformat()
         }
