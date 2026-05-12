@@ -131,7 +131,7 @@ const StudentRegisterPage = () => {
                             <input
                                 name="department" type="text" required
                                 onChange={handleChange}
-                                placeholder="e.g. UI/UX Design"
+                                placeholder="e.g. Computer Studies"
                                 className="w-full px-3 py-2 mt-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                             />
                         </div>
@@ -154,12 +154,12 @@ const StudentRegisterPage = () => {
                     {/* Course */}
                     <div>
                         <label className="text-sm font-medium text-gray-700">
-                            Course <span className="text-gray-400 text-xs font-normal">(exam you are taking)</span>
+                            Course <span className="text-gray-400 text-xs font-normal">(exam you are taking use "UI/UX Design")</span>
                         </label>
                         <input
                             name="course" type="text" required
                             onChange={handleChange}
-                            placeholder="e.g. UI/UX Design 100"
+                            placeholder="Use (UI/UX Design)"
                             className="w-full px-3 py-2 mt-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                         />
                         <p className="text-xs text-gray-400 mt-1">
