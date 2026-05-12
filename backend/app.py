@@ -147,11 +147,13 @@ def login_student():
 
     student = Student.query.filter_by(matric_number=matric_number).first()
     if student and student.check_password(password):
+        # Use course field if available, else fall back to department + level
+        student_course = student.course if student.course else f"{student.department} {student.level}"
         access_token = create_access_token(
             identity=str(student.id),
             additional_claims={
                 'role': 'student',
-                'course': f"{student.department} {student.level}",
+                'course': student_course,
                 'full_name': student.full_name
             }
         )
@@ -233,9 +235,12 @@ def get_student_exams():
     student = Student.query.get(current_user['id'])
 
     # Use course field if available, else fall back to department + level
-    student_course = student.course if student.course else f"{student.department} {student.level}"
+    student_course = (student.course if student.course else f"{student.department} {student.level}").strip()
 
-    exams = Exam.query.filter_by(course_name=student_course).all()
+    # Case-insensitive matching to handle any capitalisation differences
+    exams = Exam.query.filter(
+        db.func.lower(Exam.course_name) == student_course.lower()
+    ).all()
 
     result = []
     for exam in exams:
@@ -458,17 +463,23 @@ def get_lecturer_students():
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    lecturer_course = current_user['course']
-    try:
-        department, level = lecturer_course.rsplit(' ', 1)
-    except ValueError:
-        return jsonify({"msg": "Could not parse course name"}), 500
+    lecturer_course = current_user['course'].strip().lower()
 
-    students = Student.query.filter_by(
-        department=department, level=level
-    ).all()
-    return jsonify([student.to_dict() for student in students]), 200
+    all_students = Student.query.all()
+    matched = []
 
+    for student in all_students:
+        # For new students — use course field directly
+        # For old students — fall back to department + level
+        if student.course:
+            student_course = student.course.strip().lower()
+        else:
+            student_course = f"{student.department} {student.level}".strip().lower()
+
+        if student_course == lecturer_course:
+            matched.append(student.to_dict())
+
+    return jsonify(matched), 200
 
 @app.route('/api/lecturer/reset-attempt', methods=['POST'])
 @jwt_required()
@@ -622,6 +633,18 @@ def run_migrations():
         db.session.rollback()
         print(f"Migration note: {e}")
 
+@app.route('/api/admin/debug-students', methods=['GET'])
+def debug_students():
+    students = Student.query.all()
+    return jsonify([{
+        'id': s.id,
+        'full_name': s.full_name,
+        'matric_number': s.matric_number,
+        'department': s.department,
+        'level': s.level,
+        'course': s.course,
+        'computed_course': s.course if s.course else f"{s.department} {s.level}"
+    } for s in students]), 200
 
 if __name__ == '__main__':
     with app.app_context():
