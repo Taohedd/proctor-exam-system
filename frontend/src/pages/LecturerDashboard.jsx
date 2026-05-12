@@ -75,7 +75,11 @@ const LecturerDashboard = () => {
                             students.map((student) => (
                                 <div key={student.id} className="p-4 border rounded-lg flex items-center space-x-4">
                                     <img
-                                        src={`http://localhost:5000/${student.passport_photo_path}`}
+                                        src={
+    student.passport_photo_path?.startsWith('http')
+        ? student.passport_photo_path
+        : `https://proctor-exam-system.onrender.com/${student.passport_photo_path}`
+}
                                         alt={student.full_name}
                                         className="w-12 h-12 rounded-full object-cover"
                                     />

@@ -469,13 +469,7 @@ def get_lecturer_students():
     matched = []
 
     for student in all_students:
-        # For new students — use course field directly
-        # For old students — fall back to department + level
-        if student.course:
-            student_course = student.course.strip().lower()
-        else:
-            student_course = f"{student.department} {student.level}".strip().lower()
-
+        student_course = (student.course if student.course else f"{student.department} {student.level}").strip().lower()
         if student_course == lecturer_course:
             matched.append(student.to_dict())
 
