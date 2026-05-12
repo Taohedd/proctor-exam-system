@@ -303,6 +303,8 @@ const ExamPage = () => {
             }
         };
 
+        
+
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('blur', handleWindowBlur);
         document.addEventListener('keydown', handleKeyDown, true);
