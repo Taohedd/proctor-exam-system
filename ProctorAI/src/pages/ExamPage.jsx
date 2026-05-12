@@ -219,8 +219,8 @@ const ExamPage = () => {
                         } else {
                             handleViolation("No face detected");
                         }
-                        //let lookAwayStartTime = null; 
-                        //const LOOK_AWAY_THRESHOLD_MS = 3000;
+                        let lookAwayStartTime = null; 
+                        const LOOK_AWAY_THRESHOLD_MS = 3000;
                     } else if (results.faceLandmarks.length > 1) {
                         handleViolation("Multiple faces detected");
                     } else if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
@@ -230,7 +230,7 @@ const ExamPage = () => {
                         const eyeLookDown = blendshapes.find(s => s.categoryName === 'eyeLookDownLeft')?.score || 0;
                         const eyeLookUp = blendshapes.find(s => s.categoryName === 'eyeLookUpLeft')?.score || 0;
 
-                        if (eyeLookLeft > 0.8 || eyeLookRight > 0.8 || eyeLookDown > 0.8 || eyeLookUp > 0.8) {
+                        if (eyeLookLeft > 0.6 || eyeLookRight > 0.6 || eyeLookDown > 0.7 || eyeLookUp > 0.7) {
                             handleViolation("Looking away from screen");
                         }
                     }
