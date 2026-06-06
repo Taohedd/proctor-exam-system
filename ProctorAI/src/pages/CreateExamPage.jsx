@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
-
+import Footer from '../components/footer';
 const CreateExamPage = () => {
     const [examDetails, setExamDetails] = useState({ title: '', duration_minutes: '' });
     const [questions, setQuestions] = useState([{

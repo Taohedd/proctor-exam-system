@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
-
+import footer from '../components/footer';
 const LoginPage = () => {
     const [role, setRole] = useState('student');
     const [identifier, setIdentifier] = useState('');

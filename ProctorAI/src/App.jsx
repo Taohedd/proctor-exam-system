@@ -12,27 +12,21 @@ import CreateExamPage from './pages/CreateExamPage';
 import ExamReportPage from './pages/ExamReportPage';
 import StudentResultsPage from './pages/StudentResultsPage';
 import Header from './components/Header';
+import Footer from './components/Footer';
 
 const ProtectedRoute = ({ children, role }) => {
     const { isAuthenticated, user } = useAuth();
-
-    if (!isAuthenticated) {
-        return <Navigate to="/login" replace />;
-    }
-
-    if (role && user?.role !== role) {
-        return <Navigate to="/login" replace />;
-    }
-
+    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (role && user?.role !== role) return <Navigate to="/login" replace />;
     return children;
 };
 
 function App() {
     return (
         <AuthProvider>
-            <div className="bg-gray-100 min-h-screen">
+            <div className="bg-gray-100 min-h-screen flex flex-col">
                 <Header />
-                <main className="container mx-auto p-4">
+                <main className="container mx-auto p-4 flex-1">
                     <Routes>
                         <Route path="/login" element={<LoginPage />} />
                         <Route path="/register/student" element={<StudentRegisterPage />} />
@@ -61,6 +55,7 @@ function App() {
                         <Route path="/" element={<Navigate to="/login" />} />
                     </Routes>
                 </main>
+                <Footer />
             </div>
         </AuthProvider>
     );

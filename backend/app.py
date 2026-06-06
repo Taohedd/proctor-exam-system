@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()  # loads .env for local dev; has no effect in production if env vars are already set
+
 import cloudinary
 import cloudinary.uploader
 from flask import Flask, request, jsonify, send_from_directory
@@ -18,18 +21,32 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
 # ── APP INIT ──────────────────────────────────────────────
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'a-very-secret-key-that-no-one-can-guess'
+
+# ── SECRETS (all must be set as environment variables) ────
+_secret_key     = os.environ.get('SECRET_KEY')
+_jwt_secret_key = os.environ.get('JWT_SECRET_KEY')
+_database_url   = os.environ.get('DATABASE_URL')
+
+if not _secret_key:
+    raise RuntimeError("SECRET_KEY environment variable is not set")
+if not _jwt_secret_key:
+    raise RuntimeError("JWT_SECRET_KEY environment variable is not set")
+if not _database_url:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
+
+app.config['SECRET_KEY'] = _secret_key
 
 # ── DATABASE CONFIG ───────────────────────────────────────
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///site.db')
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
-elif DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+# Normalise URL scheme for psycopg3
+if _database_url.startswith("postgres://"):
+    _database_url = _database_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif _database_url.startswith("postgresql://"):
+    _database_url = _database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = _database_url
 
 # ── JWT CONFIG ────────────────────────────────────────────
-app.config['JWT_SECRET_KEY'] = 'another-super-secret-key'
+app.config['JWT_SECRET_KEY']           = _jwt_secret_key
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 
 # ── UPLOAD FOLDER ─────────────────────────────────────────
@@ -53,25 +70,29 @@ CORS(app, resources={r"/api/*": {"origins": [
 ]}})
 
 
-# ── HELPERS ───────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════
+# HELPERS
+# ════════════════════════════════════════════════════════════
+
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
 def get_current_user():
     identity = get_jwt_identity()
-    claims = get_jwt()
+    claims   = get_jwt()
     return {
-        'id': int(identity),
-        'role': claims.get('role'),
-        'course': claims.get('course'),
+        'id':        int(identity),
+        'role':      claims.get('role'),
+        'course':    claims.get('course'),
         'full_name': claims.get('full_name')
     }
 
+
 def upload_image(file, public_id):
     """Upload image to Cloudinary if configured, else save locally."""
-    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME')
-    if cloud_name:
+    if os.environ.get('CLOUDINARY_CLOUD_NAME'):
         result = cloudinary.uploader.upload(
             file,
             folder="proctor_passports",
@@ -79,15 +100,47 @@ def upload_image(file, public_id):
             overwrite=True
         )
         return result['secure_url']
-    else:
-        # Local fallback
-        filename = secure_filename(f"{public_id}.jpg")
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        return f"uploads/{filename}"
+    # Local fallback
+    filename = secure_filename(f"{public_id}.jpg")
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+    return f"uploads/{filename}"
 
 
-# ── SERVE LOCAL UPLOADS ───────────────────────────────────
+# ── AUTO MIGRATION ────────────────────────────────────────
+def run_migrations():
+    """Add any missing columns that weren't in the original schema."""
+    try:
+        from sqlalchemy import text
+        # IF NOT EXISTS avoids an error if the column is already present
+        db.session.execute(text("""
+            ALTER TABLE students
+            ADD COLUMN IF NOT EXISTS course VARCHAR(100)
+        """))
+        db.session.commit()
+        print("✅ Migration complete.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Migration note: {e}")
+
+
+# ── DB INIT ───────────────────────────────────────────────
+# Runs at module load time so it works under gunicorn as well as
+# the dev server (gunicorn never reaches `if __name__ == '__main__'`).
+with app.app_context():
+    try:
+        db.create_all()
+        run_migrations()
+        print("✅ Database connected and tables ready.")
+    except Exception as e:
+        print(f"⚠️  Database connection failed at startup: {e}")
+        print("   Check that your Supabase project is active and DATABASE_URL is correct.")
+
+
+# ════════════════════════════════════════════════════════════
+# SERVE LOCAL UPLOADS
+# ════════════════════════════════════════════════════════════
+
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
@@ -138,22 +191,21 @@ def register_student():
 
 @app.route('/api/student/login', methods=['POST'])
 def login_student():
-    data = request.get_json()
+    data         = request.get_json()
     matric_number = data.get('matric_number')
-    password = data.get('password')
+    password     = data.get('password')
 
     if not matric_number or not password:
         return jsonify({"msg": "Matric number and password are required"}), 400
 
     student = Student.query.filter_by(matric_number=matric_number).first()
     if student and student.check_password(password):
-        # Use course field if available, else fall back to department + level
         student_course = student.course if student.course else f"{student.department} {student.level}"
-        access_token = create_access_token(
+        access_token   = create_access_token(
             identity=str(student.id),
             additional_claims={
-                'role': 'student',
-                'course': student_course,
+                'role':      'student',
+                'course':    student_course,
                 'full_name': student.full_name
             }
         )
@@ -185,8 +237,8 @@ def register_lecturer():
 
 @app.route('/api/lecturer/login', methods=['POST'])
 def login_lecturer():
-    data = request.get_json()
-    email = data.get('email')
+    data     = request.get_json()
+    email    = data.get('email')
     password = data.get('password')
 
     if not email or not password:
@@ -197,8 +249,8 @@ def login_lecturer():
         access_token = create_access_token(
             identity=str(lecturer.id),
             additional_claims={
-                'role': 'lecturer',
-                'course': lecturer.course_name,
+                'role':      'lecturer',
+                'course':    lecturer.course_name,
                 'full_name': lecturer.full_name
             }
         )
@@ -218,7 +270,7 @@ def get_student_profile():
     if current_user['role'] != 'student':
         return jsonify({"msg": "Students only!"}), 403
 
-    student = Student.query.get(current_user['id'])
+    student = db.session.get(Student, current_user['id'])
     if not student:
         return jsonify({"msg": "Student not found"}), 404
 
@@ -232,12 +284,9 @@ def get_student_exams():
     if current_user['role'] != 'student':
         return jsonify({"msg": "Access forbidden"}), 403
 
-    student = Student.query.get(current_user['id'])
-
-    # Use course field if available, else fall back to department + level
+    student = db.session.get(Student, current_user['id'])
     student_course = (student.course if student.course else f"{student.department} {student.level}").strip()
 
-    # Case-insensitive matching to handle any capitalisation differences
     exams = Exam.query.filter(
         db.func.lower(Exam.course_name) == student_course.lower()
     ).all()
@@ -248,11 +297,11 @@ def get_student_exams():
             student_id=current_user['id'],
             exam_id=exam.id
         ).first()
-        exam_dict = exam.to_dict()
-        exam_dict['already_taken'] = existing_result is not None
-        exam_dict['score'] = existing_result.score if existing_result else None
+        exam_dict                    = exam.to_dict()
+        exam_dict['already_taken']   = existing_result is not None
+        exam_dict['score']           = existing_result.score           if existing_result else None
         exam_dict['total_questions'] = existing_result.total_questions if existing_result else None
-        exam_dict['status'] = existing_result.status if existing_result else None
+        exam_dict['status']          = existing_result.status          if existing_result else None
         result.append(exam_dict)
 
     return jsonify(result), 200
@@ -263,7 +312,6 @@ def get_student_exams():
 def get_exam_questions(exam_id):
     current_user = get_current_user()
 
-    # Prevent retaking from the backend too
     if current_user['role'] == 'student':
         existing = ExamResult.query.filter_by(
             student_id=current_user['id'],
@@ -276,7 +324,6 @@ def get_exam_questions(exam_id):
 
     if current_user['role'] == 'student':
         return jsonify([q.to_dict(include_answer=False) for q in questions]), 200
-
     if current_user['role'] == 'lecturer':
         return jsonify([q.to_dict(include_answer=True) for q in questions]), 200
 
@@ -295,16 +342,16 @@ def submit_exam(exam_id):
     ).first():
         return jsonify({"msg": "You have already submitted this exam."}), 400
 
-    data = request.get_json()
-    answers = data.get('answers', {})
+    data      = request.get_json()
+    answers   = data.get('answers', {})
     time_taken = data.get('time_taken', 0)
-    status = data.get('status', 'Completed')
+    status    = data.get('status', 'Completed')
 
     questions = Question.query.filter_by(exam_id=exam_id).all()
-    score = 0
-    for q in questions:
-        if str(q.id) in answers and answers[str(q.id)] == q.correct_option:
-            score += 1
+    score     = sum(
+        1 for q in questions
+        if str(q.id) in answers and answers[str(q.id)] == q.correct_option
+    )
 
     exam_result = ExamResult(
         student_id=current_user['id'],
@@ -318,7 +365,7 @@ def submit_exam(exam_id):
     db.session.commit()
 
     return jsonify({
-        "msg": "Exam submitted successfully",
+        "msg":   "Exam submitted successfully",
         "score": score,
         "total": len(questions)
     }), 200
@@ -339,10 +386,6 @@ def get_student_results():
 # LECTURER ROUTES
 # ════════════════════════════════════════════════════════════
 
-# ════════════════════════════════════════════════════════════
-# LECTURER ROUTES
-# ════════════════════════════════════════════════════════════
-
 @app.route('/api/exam/create', methods=['POST'])
 @jwt_required()
 def create_exam():
@@ -350,8 +393,8 @@ def create_exam():
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    data = request.get_json()
-    exam_data = data.get('exam')
+    data           = request.get_json()
+    exam_data      = data.get('exam')
     questions_data = data.get('questions')
 
     if not exam_data or not questions_data:
@@ -400,33 +443,33 @@ def get_exam_results(exam_id):
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    exam = Exam.query.get(exam_id)
+    exam = db.session.get(Exam, exam_id)
     if not exam:
         return jsonify({"msg": "Exam not found"}), 404
 
-    results = ExamResult.query.filter_by(exam_id=exam_id).all()
+    results      = ExamResult.query.filter_by(exam_id=exam_id).all()
     results_data = []
 
     for result in results:
         try:
-            student = Student.query.get(result.student_id)
-            flags = ProctoringFlag.query.filter_by(
+            student = db.session.get(Student, result.student_id)
+            flags   = ProctoringFlag.query.filter_by(
                 student_id=result.student_id,
                 exam_id=exam_id
             ).all()
             results_data.append({
-                'student_id': result.student_id,
-                'student_name': student.full_name if student else 'Unknown',
-                'matric_number': student.matric_number if student else 'Unknown',
-                'exam_id': result.exam_id,
-                'exam_title': exam.title,
-                'score': result.score,
+                'student_id':      result.student_id,
+                'student_name':    student.full_name    if student else 'Unknown',
+                'matric_number':   student.matric_number if student else 'Unknown',
+                'exam_id':         result.exam_id,
+                'exam_title':      exam.title,
+                'score':           result.score,
                 'total_questions': result.total_questions,
-                'percentage': round((result.score / result.total_questions) * 100, 2) if result.total_questions > 0 else 0,
-                'time_taken': result.time_taken,
-                'status': result.status,
-                'submitted_at': result.submitted_at.isoformat(),
-                'flags': [flag.to_dict() for flag in flags]
+                'percentage':      round((result.score / result.total_questions) * 100, 2) if result.total_questions > 0 else 0,
+                'time_taken':      result.time_taken,
+                'status':          result.status,
+                'submitted_at':    result.submitted_at.isoformat(),
+                'flags':           [flag.to_dict() for flag in flags]
             })
         except Exception as e:
             print(f"Error processing result: {e}")
@@ -442,38 +485,35 @@ def get_exam_questions_full(exam_id):
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    exam = Exam.query.get(exam_id)
+    exam = db.session.get(Exam, exam_id)
     if not exam:
         return jsonify({"msg": "Exam not found"}), 404
 
     questions = Question.query.filter_by(exam_id=exam_id).all()
     return jsonify({
-        'exam_title': exam.title,
-        'course_name': exam.course_name,
+        'exam_title':       exam.title,
+        'course_name':      exam.course_name,
         'duration_minutes': exam.duration_minutes,
-        'total_questions': len(questions),
-        'questions': [q.to_dict(include_answer=True) for q in questions]
+        'total_questions':  len(questions),
+        'questions':        [q.to_dict(include_answer=True) for q in questions]
     }), 200
 
 
 @app.route('/api/lecturer/students', methods=['GET'])
 @jwt_required()
 def get_lecturer_students():
-    current_user = get_current_user()
+    current_user  = get_current_user()
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
     lecturer_course = current_user['course'].strip().lower()
-
-    all_students = Student.query.all()
-    matched = []
-
-    for student in all_students:
-        student_course = (student.course if student.course else f"{student.department} {student.level}").strip().lower()
-        if student_course == lecturer_course:
-            matched.append(student.to_dict())
-
+    all_students    = Student.query.all()
+    matched         = [
+        s.to_dict() for s in all_students
+        if (s.course if s.course else f"{s.department} {s.level}").strip().lower() == lecturer_course
+    ]
     return jsonify(matched), 200
+
 
 @app.route('/api/lecturer/reset-attempt', methods=['POST'])
 @jwt_required()
@@ -482,9 +522,9 @@ def reset_student_attempt():
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    data = request.get_json()
+    data       = request.get_json()
     student_id = data.get('student_id')
-    exam_id = data.get('exam_id')
+    exam_id    = data.get('exam_id')
 
     if not student_id or not exam_id:
         return jsonify({"msg": "student_id and exam_id are required"}), 400
@@ -510,35 +550,34 @@ def get_student_full_report(student_id):
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    student = Student.query.get(student_id)
+    student = db.session.get(Student, student_id)
     if not student:
         return jsonify({"msg": "Student not found"}), 404
 
-    results = ExamResult.query.filter_by(student_id=student_id).all()
-
-    report = []
+    results          = ExamResult.query.filter_by(student_id=student_id).all()
+    report           = []
     total_percentage = 0
 
     for result in results:
         try:
-            exam = Exam.query.get(result.exam_id)
+            exam  = db.session.get(Exam, result.exam_id)
             flags = ProctoringFlag.query.filter_by(
                 student_id=student_id,
                 exam_id=result.exam_id
             ).all()
-            percentage = round((result.score / result.total_questions) * 100, 2) if result.total_questions > 0 else 0
+            percentage        = round((result.score / result.total_questions) * 100, 2) if result.total_questions > 0 else 0
             total_percentage += percentage
             report.append({
-                'exam_id': result.exam_id,
-                'exam_title': exam.title if exam else 'Unknown',
-                'course_name': exam.course_name if exam else 'Unknown',
-                'score': result.score,
+                'exam_id':         result.exam_id,
+                'exam_title':      exam.title       if exam else 'Unknown',
+                'course_name':     exam.course_name if exam else 'Unknown',
+                'score':           result.score,
                 'total_questions': result.total_questions,
-                'percentage': percentage,
-                'time_taken': result.time_taken,
-                'status': result.status,
-                'submitted_at': result.submitted_at.isoformat(),
-                'flags': [f.to_dict() for f in flags]
+                'percentage':      percentage,
+                'time_taken':      result.time_taken,
+                'status':          result.status,
+                'submitted_at':    result.submitted_at.isoformat(),
+                'flags':           [f.to_dict() for f in flags]
             })
         except Exception as e:
             print(f"Error processing student result: {e}")
@@ -547,11 +586,12 @@ def get_student_full_report(student_id):
     average = round(total_percentage / len(report), 2) if report else 0
 
     return jsonify({
-        'student': student.to_dict(),
+        'student':           student.to_dict(),
         'total_exams_taken': len(report),
-        'average_score': average,
-        'results': report
+        'average_score':     average,
+        'results':           report
     }), 200
+
 
 # ════════════════════════════════════════════════════════════
 # PROCTORING ROUTE
@@ -585,64 +625,49 @@ def log_proctoring_flag():
 
 @app.route('/api/admin/users', methods=['GET'])
 def get_all_users():
-    students = Student.query.all()
+    students  = Student.query.all()
     lecturers = Lecturer.query.all()
     return jsonify({
-        'total_students': len(students),
+        'total_students':  len(students),
         'total_lecturers': len(lecturers),
-        'students': [s.to_dict() for s in students],
-        'lecturers': [l.to_dict() for l in lecturers]
+        'students':        [s.to_dict() for s in students],
+        'lecturers':       [l.to_dict() for l in lecturers]
     }), 200
 
 
 @app.route('/api/admin/exams', methods=['GET'])
 def get_all_exams():
-    exams = Exam.query.all()
+    exams   = Exam.query.all()
     results = ExamResult.query.all()
-    flags = ProctoringFlag.query.all()
+    flags   = ProctoringFlag.query.all()
     return jsonify({
-        'total_exams': len(exams),
-        'total_submissions': len(results),
-        'total_flags': len(flags),
-        'exams': [e.to_dict() for e in exams],
-        'results': [r.to_dict() for r in results],
-        'flags': [f.to_dict() for f in flags]
+        'total_exams':        len(exams),
+        'total_submissions':  len(results),
+        'total_flags':        len(flags),
+        'exams':              [e.to_dict() for e in exams],
+        'results':            [r.to_dict() for r in results],
+        'flags':              [f.to_dict() for f in flags]
     }), 200
 
-
-# ════════════════════════════════════════════════════════════
-# RUN
-# ════════════════════════════════════════════════════════════
-# ── AUTO MIGRATION ────────────────────────────────────────
-def run_migrations():
-    try:
-        from sqlalchemy import text
-        db.session.execute(text("""
-            ALTER TABLE students 
-            ADD COLUMN IF NOT EXISTS course VARCHAR(100)
-        """))
-        db.session.commit()
-        print("✅ Migration complete.")
-    except Exception as e:
-        db.session.rollback()
-        print(f"Migration note: {e}")
 
 @app.route('/api/admin/debug-students', methods=['GET'])
 def debug_students():
     students = Student.query.all()
     return jsonify([{
-        'id': s.id,
-        'full_name': s.full_name,
-        'matric_number': s.matric_number,
-        'department': s.department,
-        'level': s.level,
-        'course': s.course,
+        'id':             s.id,
+        'full_name':      s.full_name,
+        'matric_number':  s.matric_number,
+        'department':     s.department,
+        'level':          s.level,
+        'course':         s.course,
         'computed_course': s.course if s.course else f"{s.department} {s.level}"
     } for s in students]), 200
 
+
+# ════════════════════════════════════════════════════════════
+# RUN (local dev only — gunicorn does not use this block)
+# ════════════════════════════════════════════════════════════
+
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        run_migrations()
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Footer from '../components/footer';
 
 const StudentDashboard = () => {
     const [exams, setExams] = useState([]);
