@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-    baseURL: 'https://proctor-exam-system.onrender.com/api',
+    baseURL: 'https://proctor-exam-system-production.up.railway.app/api',
     headers: {
         'Content-Type': 'application/json',
     },

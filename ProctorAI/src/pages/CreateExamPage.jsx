@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Footer from '../components/footer';
+import { useAuth } from '../context/AuthContext';
+
 const CreateExamPage = () => {
-    const [examDetails, setExamDetails] = useState({ title: '', duration_minutes: '' });
+    
+    const [examDetails, setExamDetails] = useState({ title: '', duration_minutes: '', course_name: '' });
+    const [lecturerCourses, setLecturerCourses] = useState([]);
     const [questions, setQuestions] = useState([{
         question_text: '',
         options: { a: '', b: '', c: '', d: '' },
@@ -15,6 +19,24 @@ const CreateExamPage = () => {
     const [submitting, setSubmitting] = useState(false);
     const [importMode, setImportMode] = useState('manual');
     const navigate = useNavigate();
+
+    // Load lecturer's courses from stored user object
+    useEffect(() => {
+        try {
+            const stored = localStorage.getItem('user');
+            if (stored) {
+                const user = JSON.parse(stored);
+                const courses = user.course_names || [];
+                setLecturerCourses(courses);
+                // Auto-select if only one course
+                if (courses.length === 1) {
+                    setExamDetails(prev => ({ ...prev, course_name: courses[0] }));
+                }
+            }
+        } catch {
+            setError('Could not load your course list. Please log out and log in again.');
+        }
+    }, []);
 
     const handleExamDetailChange = (e) => {
         setExamDetails({ ...examDetails, [e.target.name]: e.target.value });
@@ -133,6 +155,10 @@ const CreateExamPage = () => {
             setError('Please fill out all exam details.');
             return;
         }
+        if (!examDetails.course_name) {
+            setError('Please select a course for this exam.');
+            return;
+        }
         for (const q of questions) {
             if (!q.question_text || !q.options.a || !q.options.b || !q.options.c || !q.options.d) {
                 setError('Please fill out all fields for every question.');
@@ -183,6 +209,31 @@ const CreateExamPage = () => {
                                 className="mt-1 block w-full border border-gray-300 rounded-md py-2 px-3"
                                 required
                             />
+                        </div>
+
+                        {/* Course Selector — spans full width */}
+                        <div className="md:col-span-2">
+                            <label className="block text-sm font-medium text-gray-700">
+                                Course <span className="text-gray-400 text-xs font-normal">(which course is this exam for?)</span>
+                            </label>
+                            {lecturerCourses.length === 0 ? (
+                                <p className="mt-1 text-sm text-red-500">
+                                    No courses found. Please log out and log in again.
+                                </p>
+                            ) : (
+                                <select
+                                    name="course_name"
+                                    value={examDetails.course_name}
+                                    onChange={handleExamDetailChange}
+                                    required
+                                    className="mt-1 block w-full border border-gray-300 rounded-md py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500"
+                                >
+                                    <option value="">— Select a course —</option>
+                                    {lecturerCourses.map(course => (
+                                        <option key={course} value={course}>{course}</option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
                     </div>
                 </div>

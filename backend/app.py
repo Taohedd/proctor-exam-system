@@ -45,7 +45,7 @@ elif _database_url.startswith("postgresql://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = _database_url
 
-# ── JWT CONFIG ────────────────────────────────────────────
+# ── JWT CONFIG ───────────────────────────────────────────
 app.config['JWT_SECRET_KEY']           = _jwt_secret_key
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 
@@ -85,10 +85,9 @@ def get_current_user():
     return {
         'id':        int(identity),
         'role':      claims.get('role'),
-        'course':    claims.get('course'),
+        'courses':   claims.get('courses', []),   # now a list
         'full_name': claims.get('full_name')
     }
-
 
 def upload_image(file, public_id):
     """Upload image to Cloudinary if configured, else save locally."""
@@ -109,15 +108,30 @@ def upload_image(file, public_id):
 
 # ── AUTO MIGRATION ────────────────────────────────────────
 def run_migrations():
-    """Add any missing columns that weren't in the original schema."""
     try:
         from sqlalchemy import text
-        # IF NOT EXISTS avoids an error if the column is already present
+
         db.session.execute(text("""
             ALTER TABLE students
             ADD COLUMN IF NOT EXISTS course VARCHAR(100)
         """))
+
+        # Add new course_names column to lecturers
+        db.session.execute(text("""
+            ALTER TABLE lecturers
+            ADD COLUMN IF NOT EXISTS course_names TEXT
+        """))
         db.session.commit()
+
+        # Migrate existing lecturers: wrap their old course_name into the new JSON array
+        lecturers_to_migrate = Lecturer.query.filter(
+            Lecturer.course_names == None,
+            Lecturer.course_name != None
+        ).all()
+        for lecturer in lecturers_to_migrate:
+            lecturer.set_courses([lecturer.course_name])
+        db.session.commit()
+
         print("✅ Migration complete.")
     except Exception as e:
         db.session.rollback()
@@ -218,8 +232,16 @@ def login_student():
 def register_lecturer():
     data = request.get_json()
 
-    if not all(k in data for k in ['full_name', 'email', 'password', 'course_name']):
+    if not all(k in data for k in ['full_name', 'email', 'password', 'course_names']):
         return jsonify({"msg": "Missing required fields"}), 400
+
+    if not isinstance(data['course_names'], list) or len(data['course_names']) == 0:
+        return jsonify({"msg": "course_names must be a non-empty list"}), 400
+
+    # Sanitise: strip whitespace, remove blanks
+    courses = [c.strip() for c in data['course_names'] if c.strip()]
+    if not courses:
+        return jsonify({"msg": "Please provide at least one valid course name"}), 400
 
     if Lecturer.query.filter_by(email=data['email']).first():
         return jsonify({"msg": "Email already exists"}), 409
@@ -227,8 +249,8 @@ def register_lecturer():
     new_lecturer = Lecturer(
         full_name=data['full_name'],
         email=data['email'],
-        course_name=data['course_name']
     )
+    new_lecturer.set_courses(courses)
     new_lecturer.set_password(data['password'])
     db.session.add(new_lecturer)
     db.session.commit()
@@ -250,7 +272,7 @@ def login_lecturer():
             identity=str(lecturer.id),
             additional_claims={
                 'role':      'lecturer',
-                'course':    lecturer.course_name,
+                'courses':   lecturer.get_courses(),   # list in JWT
                 'full_name': lecturer.full_name
             }
         )
@@ -400,9 +422,15 @@ def create_exam():
     if not exam_data or not questions_data:
         return jsonify({"msg": "Missing exam or questions data"}), 400
 
+    # Validate the chosen course belongs to this lecturer
+    selected_course  = exam_data.get('course_name', '').strip()
+    lecturer_courses = [c.lower() for c in current_user['courses']]
+    if not selected_course or selected_course.lower() not in lecturer_courses:
+        return jsonify({"msg": "Invalid course. Please select one of your registered courses."}), 400
+
     new_exam = Exam(
         title=exam_data['title'],
-        course_name=current_user['course'],
+        course_name=selected_course,
         duration_minutes=exam_data['duration_minutes'],
         lecturer_id=current_user['id']
     )
@@ -502,15 +530,15 @@ def get_exam_questions_full(exam_id):
 @app.route('/api/lecturer/students', methods=['GET'])
 @jwt_required()
 def get_lecturer_students():
-    current_user  = get_current_user()
+    current_user = get_current_user()
     if current_user['role'] != 'lecturer':
         return jsonify({"msg": "Lecturers only!"}), 403
 
-    lecturer_course = current_user['course'].strip().lower()
-    all_students    = Student.query.all()
-    matched         = [
+    lecturer_courses = [c.strip().lower() for c in current_user['courses']]
+    all_students     = Student.query.all()
+    matched = [
         s.to_dict() for s in all_students
-        if (s.course if s.course else f"{s.department} {s.level}").strip().lower() == lecturer_course
+        if (s.course if s.course else f"{s.department} {s.level}").strip().lower() in lecturer_courses
     ]
     return jsonify(matched), 200
 

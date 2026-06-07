@@ -1,6 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+import json
 
 db = SQLAlchemy()
 
@@ -46,7 +47,8 @@ class Lecturer(db.Model):
     full_name = db.Column(db.String(150), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
-    course_name = db.Column(db.String(100), nullable=False)
+    course_name = db.Column(db.String(100), nullable=True)   # legacy column — kept for migration
+    course_names = db.Column(db.Text, nullable=True)          # NEW — JSON array e.g. '["Math 101","Physics 200"]'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     exams = db.relationship('Exam', backref='lecturer', lazy=True, cascade="all, delete-orphan")
@@ -57,12 +59,27 @@ class Lecturer(db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
+    def get_courses(self):
+        """Always returns a list of course names."""
+        if self.course_names:
+            try:
+                return json.loads(self.course_names)
+            except Exception:
+                pass
+        # Fallback for old single-course lecturers
+        if self.course_name:
+            return [self.course_name]
+        return []
+
+    def set_courses(self, courses_list):
+        self.course_names = json.dumps(courses_list)
+
     def to_dict(self):
         return {
             'id': self.id,
             'full_name': self.full_name,
             'email': self.email,
-            'course_name': self.course_name,
+            'course_names': self.get_courses(),
             'created_at': self.created_at.isoformat()
         }
 

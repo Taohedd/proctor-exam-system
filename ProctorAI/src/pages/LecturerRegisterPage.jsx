@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Footer from '../components/footer';
+
 const EyeIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -21,8 +22,8 @@ const LecturerRegisterPage = () => {
         full_name: '',
         email: '',
         password: '',
-        course_name: '',
     });
+    const [courses, setCourses] = useState(['']);
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -33,6 +34,21 @@ const LecturerRegisterPage = () => {
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
+    };
+
+    const handleCourseChange = (index, value) => {
+        const updated = [...courses];
+        updated[index] = value;
+        setCourses(updated);
+    };
+
+    const addCourse = () => {
+        if (courses.length < 10) setCourses([...courses, '']);
+    };
+
+    const removeCourse = (index) => {
+        if (courses.length === 1) return; // keep at least one
+        setCourses(courses.filter((_, i) => i !== index));
     };
 
     const handleSubmit = async (e) => {
@@ -49,9 +65,25 @@ const LecturerRegisterPage = () => {
             return;
         }
 
+        const filteredCourses = courses.map(c => c.trim()).filter(Boolean);
+        if (filteredCourses.length === 0) {
+            setError('Please enter at least one course name.');
+            return;
+        }
+
+        // Check for duplicates
+        const uniqueCourses = new Set(filteredCourses.map(c => c.toLowerCase()));
+        if (uniqueCourses.size !== filteredCourses.length) {
+            setError('Duplicate course names are not allowed.');
+            return;
+        }
+
         setLoading(true);
         try {
-            await api.post('/lecturer/register', formData);
+            await api.post('/lecturer/register', {
+                ...formData,
+                course_names: filteredCourses,  // sends array to backend
+            });
             setSuccess('Registration successful! Redirecting to login...');
             setTimeout(() => navigate('/login'), 2000);
         } catch (err) {
@@ -98,19 +130,50 @@ const LecturerRegisterPage = () => {
                         />
                     </div>
 
-                    {/* Course Name */}
+                    {/* Courses */}
                     <div>
-                        <label className="text-sm font-medium text-gray-700">
-                            Course Name <span className="text-gray-400 text-xs font-normal">(students will use this to register)</span>
-                        </label>
-                        <input
-                            name="course_name" type="text" required
-                            onChange={handleChange}
-                            placeholder="e.g. UI/UX Design 100"
-                            className="w-full px-3 py-2 mt-1 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                        />
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-sm font-medium text-gray-700">
+                                Course Names <span className="text-gray-400 text-xs font-normal">(students will use these to register)</span>
+                            </label>
+                            <span className="text-xs text-gray-400">{courses.length}/10</span>
+                        </div>
+
+                        <div className="space-y-2">
+                            {courses.map((course, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                    <input
+                                        type="text"
+                                        value={course}
+                                        onChange={(e) => handleCourseChange(index, e.target.value)}
+                                        placeholder={`e.g. UI/UX Design 10${index}`}
+                                        className="w-full px-3 py-2 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => removeCourse(index)}
+                                        disabled={courses.length === 1}
+                                        className="text-red-400 hover:text-red-600 disabled:text-gray-200 text-xl font-bold px-1"
+                                        title="Remove course"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        {courses.length < 10 && (
+                            <button
+                                type="button"
+                                onClick={addCourse}
+                                className="mt-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+                            >
+                                + Add another course
+                            </button>
+                        )}
+
                         <p className="text-xs text-gray-400 mt-1">
-                            ⚠️ Students must enter this exact name when registering.
+                            ⚠️ Students must enter these exact names when registering.
                         </p>
                     </div>
 
@@ -158,12 +221,8 @@ const LecturerRegisterPage = () => {
                                 {showConfirmPassword ? <EyeOffIcon /> : <EyeIcon />}
                             </button>
                         </div>
-                        {passwordsMismatch && (
-                            <p className="text-xs text-red-500 mt-1">❌ Passwords do not match.</p>
-                        )}
-                        {passwordsMatch && (
-                            <p className="text-xs text-green-600 mt-1">✅ Passwords match.</p>
-                        )}
+                        {passwordsMismatch && <p className="text-xs text-red-500 mt-1">❌ Passwords do not match.</p>}
+                        {passwordsMatch && <p className="text-xs text-green-600 mt-1">✅ Passwords match.</p>}
                     </div>
 
                     <button
