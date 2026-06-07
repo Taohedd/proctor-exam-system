@@ -489,6 +489,8 @@ def get_exam_results(exam_id):
                 'student_id':      result.student_id,
                 'student_name':    student.full_name    if student else 'Unknown',
                 'matric_number':   student.matric_number if student else 'Unknown',
+                'department':      student.department   if student else 'Unknown',
+                'level':           student.level        if student else 'Unknown',
                 'exam_id':         result.exam_id,
                 'exam_title':      exam.title,
                 'score':           result.score,

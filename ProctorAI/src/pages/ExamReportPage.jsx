@@ -119,10 +119,12 @@ const ExamReportPage = () => {
                 ['Report Generated', new Date().toLocaleString()],
                 [],
                 ['ALL EXAM RESULTS'],
-                ['Exam Title', 'Course', 'Score', 'Total', 'Percentage', 'Status', 'Time Taken (s)', 'Submitted At', 'Flags'],
+                ['Exam Title', 'Course', 'Department', 'Level', 'Score', 'Total Questions', 'Percentage', 'Status', 'Time Taken (s)', 'Submitted At', 'Flags'],
                 ...allResults.map(r => [
                     r.exam_title,
                     r.course_name,
+                    r.department,
+                    r.level,
                     r.score,
                     r.total_questions,
                     `${r.percentage}%`,
@@ -145,6 +147,8 @@ const ExamReportPage = () => {
                 const examData = [
                     [`EXAM: ${result.exam_title}`],
                     ['Course', result.course_name],
+                    ['Department', result.department],
+                    ['Level', result.level],
                     ['Score', `${result.score} / ${result.total_questions}`],
                     ['Percentage', `${result.percentage}%`],
                     ['Status', result.status],
@@ -197,10 +201,12 @@ const ExamReportPage = () => {
                 [`Exam Report: ${examTitle}`],
                 ['Generated', new Date().toLocaleString()],
                 [],
-                ['Student Name', 'Matric No.', 'Score', 'Total', 'Percentage', 'Status', 'Time (s)', 'Flags', 'Submitted'],
+                ['Student Name', 'Matric No.', 'Department', 'Level', 'Score', 'Total number of Questions', 'Percentage', 'Status', 'Time (s)', 'Flags', 'Submitted'],
                 ...results.map(r => [
                     r.student_name,
                     r.matric_number,
+                    r.department,
+                    r.level,
                     r.score,
                     r.total_questions,
                     `${r.percentage}%`,
@@ -212,7 +218,7 @@ const ExamReportPage = () => {
             ];
             const ws = XLSX.utils.aoa_to_sheet(allData);
             ws['!cols'] = [
-                { wch: 25 }, { wch: 18 }, { wch: 8 }, { wch: 8 },
+                { wch: 25 }, { wch: 18 }, { wch: 15 }, { wch: 15 },
                 { wch: 12 }, { wch: 18 }, { wch: 10 }, { wch: 8 }, { wch: 24 }
             ];
             const wb = XLSX.utils.book_new();
