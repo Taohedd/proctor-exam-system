@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
-import Footer from '../components/footer';
+import Footer from '../components/Footer';
 
 const ExamReportPage = () => {
     const { examId } = useParams();

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import Footer from '../components/footer';
+import Footer from '../components/Footer';
 
 const LecturerDashboard = () => {
     const [exams, setExams] = useState([]);

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
-import Footer from '../components/footer';
+import Footer from '../components/Footer';
 
 const LEVELS = ['100L', '200L', '300L', '400L', '500L', 'ND 1', 'ND 2', 'HND 1', 'HND 2'];
 

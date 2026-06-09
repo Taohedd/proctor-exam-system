@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
-import Footer from '../components/footer';
+import Footer from '../components/Footer';
 import { useAuth } from '../context/AuthContext';
 
 const CreateExamPage = () => {
